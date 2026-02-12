@@ -1,4 +1,7 @@
 syntax = "proto2";
+
+option go_package = "mini-amazon-ups/proto";
+
 message UInitTruck{
   required int32 id = 1;
   required int32 x=2;
