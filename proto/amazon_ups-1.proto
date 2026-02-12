@@ -1,0 +1,117 @@
+syntax = "proto3";
+package duke.ece568.amazon_ups;
+option go_package = "mini-amazon-ups/proto";
+
+// Common messages
+message Coordinate {
+  int32 x = 1;
+  int32 y = 2;
+}
+
+message ItemInfo {
+  string item_name = 1;
+  int32 quantity = 2;
+}
+
+message Ack {
+  int64 seqnum = 1;
+  bool success = 2;
+  string message = 3;
+}
+
+// Amazon to UPS messages
+message PickupRequest {
+  int64 seqnum = 1;
+  string ups_user_id = 2;
+  repeated ItemInfo items = 3;
+  int64 order_id = 4;
+  int32 warehouse_id = 5;
+  Coordinate user_destination = 6;
+}
+
+message Redirect {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+  Coordinate new_destination = 3;
+}
+
+message CancelOrder {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+}
+
+message LoadReady {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+}
+
+// UPS to Amazon messages
+message PickupResp {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+  int64 order_id = 3;
+  int32 truck_id = 4;
+}
+
+message RedirectResp {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+  bool success = 3;
+  string reason = 4;
+}
+
+message CancelResp {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+  bool success = 3;
+  string reason = 4;
+}
+
+message TruckArrived {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+  int32 truck_id = 3;
+  int32 warehouse_id = 4;
+}
+
+message DeliveryStarted {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+}
+
+message DeliveryComplete {
+  int64 seqnum = 1;
+  int64 package_id = 2;
+}
+
+// gRPC Services
+
+// UPS Service called by Amazon
+service UpsService {
+  // Request UPS to pick up a package from Amazon's warehouse
+  rpc RequestPickup(PickupRequest) returns (PickupResp);
+  
+  // Request redirect of a package to a new destination
+  rpc RequestRedirect(Redirect) returns (RedirectResp);
+  
+  // Request cancellation of a package pickup/delivery
+  rpc RequestCancel(CancelOrder) returns (CancelResp);
+  
+  // Notify UPS that the package is ready for loading
+  rpc NotifyLoadReady(LoadReady) returns (Ack);
+}
+
+// Amazon Service called by UPS
+service AmazonService {
+  // Notify Amazon that the truck has arrived at the warehouse
+  rpc NotifyTruckArrived(TruckArrived) returns (Ack);
+  
+  // Notify Amazon that the delivery has started
+  rpc NotifyDeliveryStarted(DeliveryStarted) returns (Ack);
+  
+  // Notify Amazon that the delivery is complete
+  rpc NotifyDeliveryComplete(DeliveryComplete) returns (Ack);
+
+  // Notify Amazon of a redirect request from UPS
+  rpc NotifyRedirectRequest(Redirect) returns (Ack);
+}
