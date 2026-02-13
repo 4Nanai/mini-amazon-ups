@@ -2,12 +2,14 @@ package server
 
 import (
 	"context"
+	"log/slog"
+	amazonclient "mini-amazon-ups/amazon/client"
 	"mini-amazon-ups/proto"
 	worldups "mini-amazon-ups/world/ups"
+	"net"
 	"os"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
@@ -22,8 +24,27 @@ type UpsServer struct {
 func NewUpsServer(worldClient *worldups.UpsWorldClient) *UpsServer {
 	return &UpsServer{
 		worldClient:  worldClient,
-		amazonClient: newAmazonClient(),
+		amazonClient: amazonclient.NewAmazonClient(),
 	}
+}
+
+// Start starts the gRPC server to listen for incoming requests from Amazon service
+func (server *UpsServer) Start() {
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "50052" // Default port if not specified
+	}
+	lis, err := net.Listen("tcp", "localhost:"+port)
+	if err != nil {
+		panic("Error starting server")
+	}
+	slog.Info("[UPS] Server starts to listen on port " + port)
+	grpcServer := grpc.NewServer()
+	proto.RegisterUpsServiceServer(
+		grpcServer,
+		server,
+	)
+	grpcServer.Serve(lis)
 }
 
 // RequestPickup handles pickup requests from Amazon service
@@ -47,22 +68,4 @@ func (server *UpsServer) NotifyLoadReady(ctx context.Context, req *proto.LoadRea
 		Success: *protobuf.Bool(true),
 		Seqnum:  req.Seqnum,
 	}, nil
-}
-
-// newAmazonClient creates a new gRPC client for communicating with the Amazon service
-func newAmazonClient() proto.AmazonServiceClient {
-	host := os.Getenv("AMAZON_SERVER_HOST")
-	if host == "" {
-		host = "localhost" // Default host if not specified
-	}
-	port := os.Getenv("AMAZON_SERVER_PORT")
-	if port == "" {
-		port = "50051" // Default port if not specified
-	}
-	var err error
-	conn, err := grpc.NewClient("dns:///"+host+":"+port, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(err)
-	}
-	return proto.NewAmazonServiceClient(conn)
 }

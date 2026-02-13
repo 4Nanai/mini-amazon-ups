@@ -5,14 +5,12 @@ import (
 	"mini-amazon-ups/proto"
 	"mini-amazon-ups/ups/server"
 	worldups "mini-amazon-ups/world/ups"
-	"net"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/lmittmann/tint"
-	"google.golang.org/grpc"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
@@ -35,26 +33,8 @@ func main() {
 	if err != nil {
 		panic("Failed to connect to world simulator: " + err.Error())
 	}
-	StartUpsServer(worldClient)
-}
-
-func StartUpsServer(worldClient *worldups.UpsWorldClient) {
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
-		port = "50052" // Default port if not specified
-	}
-	lis, err := net.Listen("tcp", "localhost:"+port)
-	if err != nil {
-		panic("Error starting server")
-	}
-	slog.Info("[UPS] Server starts to listen on port " + port)
-	grpcServer := grpc.NewServer()
 	upsServer := server.NewUpsServer(worldClient)
-	proto.RegisterUpsServiceServer(
-		grpcServer,
-		upsServer,
-	)
-	grpcServer.Serve(lis)
+	upsServer.Start()
 }
 
 func ConnectToWorld() (*worldups.UpsWorldClient, error) {
