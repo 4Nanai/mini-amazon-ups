@@ -5,14 +5,12 @@ import (
 	"mini-amazon-ups/amazon/server"
 	"mini-amazon-ups/proto"
 	worldamazon "mini-amazon-ups/world/amazon"
-	"net"
 	"os"
 	"strconv"
 	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/lmittmann/tint"
-	"google.golang.org/grpc"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
@@ -34,29 +32,8 @@ func main() {
 	if err != nil {
 		panic("Failed to connect to world simulator: " + err.Error())
 	}
-	StartAmazonServer(worldClient)
-}
-
-func StartAmazonServer(worldClient *worldamazon.AmazonWorldClient) {
-	port := os.Getenv("SERVER_PORT")
-	if port == "" {
-		port = "50051"
-	}
-
-	lis, err := net.Listen("tcp", "localhost:"+port)
-	if err != nil {
-		panic("Failed to listen on port " + port)
-	}
-	slog.Info("[Amazon] Server starts to listen on port " + port)
-
-	// Register gRPC server and start serving
-	grpcServer := grpc.NewServer()
 	amazonServer := server.NewAmazonServer(worldClient)
-	proto.RegisterAmazonServiceServer(
-		grpcServer,
-		amazonServer,
-	)
-	grpcServer.Serve(lis)
+	amazonServer.Start()
 }
 
 func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {

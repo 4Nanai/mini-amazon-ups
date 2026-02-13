@@ -2,8 +2,10 @@ package server
 
 import (
 	"context"
+	"log/slog"
 	"mini-amazon-ups/proto"
 	worldamazon "mini-amazon-ups/world/amazon"
+	"net"
 	"os"
 
 	"google.golang.org/grpc"
@@ -24,6 +26,28 @@ func NewAmazonServer(worldClient *worldamazon.AmazonWorldClient) *AmazonServer {
 		worldClient: worldClient,
 		upsClient:   newUpsClient(),
 	}
+}
+
+// Start starts the Amazon gRPC server and listens for incoming requests
+func (server *AmazonServer) Start() {
+	port := os.Getenv("SERVER_PORT")
+	if port == "" {
+		port = "50051"
+	}
+
+	lis, err := net.Listen("tcp", "localhost:"+port)
+	if err != nil {
+		panic("Failed to listen on port " + port)
+	}
+	slog.Info("[Amazon] Server starts to listen on port " + port)
+
+	// Register gRPC server and start serving
+	grpcServer := grpc.NewServer()
+	proto.RegisterAmazonServiceServer(
+		grpcServer,
+		server,
+	)
+	grpcServer.Serve(lis)
 }
 
 // NotifyTruckArrived handles notifications from UPS service when a truck arrives at a warehouse
