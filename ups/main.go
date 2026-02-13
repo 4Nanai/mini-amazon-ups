@@ -49,9 +49,7 @@ func StartUpsServer(worldClient *worldups.UpsWorldClient) {
 	}
 	slog.Info("[UPS] Server starts to listen on port " + port)
 	grpcServer := grpc.NewServer()
-	upsServer := &server.UpsServer{
-		WorldClient: worldClient,
-	}
+	upsServer := server.NewUpsServer(worldClient)
 	proto.RegisterUpsServiceServer(
 		grpcServer,
 		upsServer,
