@@ -1,0 +1,3 @@
+[submodule "world/server"]
+	path = world/server
+	url = git@github.com:yunjingliu96/world_simulator_exec.git
