@@ -51,11 +51,13 @@ func StartAmazonServer(worldClient *worldamazon.AmazonWorldClient) {
 
 	// Register gRPC server and start serving
 	grpcServer := grpc.NewServer()
+	amazonServer := &server.AmazonServer{
+		WorldClient: worldClient,
+	}
 	proto.RegisterAmazonServiceServer(
 		grpcServer,
-		server.AmazonServer{
-			WorldClient: worldClient,
-		})
+		amazonServer,
+	)
 	grpcServer.Serve(lis)
 }
 
