@@ -1,7 +1,7 @@
 package worldamazon
 
 import (
-	"encoding/binary"
+	"bufio"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,12 +10,14 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protodelim"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
 // AmazonWorldClient handles communication between Amazon service and World simulator
 type AmazonWorldClient struct {
 	conn         net.Conn
+	reader       *bufio.Reader
 	worldID      int64
 	seqNum       int64
 	seqNumMutex  sync.Mutex
@@ -34,6 +36,7 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 
 	client := &AmazonWorldClient{
 		conn:         conn,
+		reader:       bufio.NewReader(conn),
 		seqNum:       0,
 		responseChan: make(chan *proto.AResponses, 100),
 		stopChan:     make(chan struct{}),
@@ -251,49 +254,13 @@ func (c *AmazonWorldClient) receiveLoop() {
 
 // sendMessage sends a protobuf message to World
 func (c *AmazonWorldClient) sendMessage(msg protobuf.Message) error {
-	data, err := protobuf.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal message: %w", err)
-	}
-
-	// Send message length (4 bytes, big-endian)
-	lengthBuf := make([]byte, 4)
-	binary.BigEndian.PutUint32(lengthBuf, uint32(len(data)))
-
-	if _, err := c.conn.Write(lengthBuf); err != nil {
-		return fmt.Errorf("failed to write message length: %w", err)
-	}
-
-	// Send message data
-	if _, err := c.conn.Write(data); err != nil {
-		return fmt.Errorf("failed to write message data: %w", err)
-	}
-
-	return nil
+	_, err := protodelim.MarshalTo(c.conn, msg)
+	return err
 }
 
 // receiveMessage receives a protobuf message from World
 func (c *AmazonWorldClient) receiveMessage(msg protobuf.Message) error {
-	// Read message length (4 bytes, big-endian)
-	lengthBuf := make([]byte, 4)
-	if _, err := io.ReadFull(c.conn, lengthBuf); err != nil {
-		return err
-	}
-
-	length := binary.BigEndian.Uint32(lengthBuf)
-
-	// Read message data
-	data := make([]byte, length)
-	if _, err := io.ReadFull(c.conn, data); err != nil {
-		return err
-	}
-
-	// Unmarshal message
-	if err := protobuf.Unmarshal(data, msg); err != nil {
-		return fmt.Errorf("failed to unmarshal message: %w", err)
-	}
-
-	return nil
+	return protodelim.UnmarshalFrom(c.reader, msg)
 }
 
 // IsConnected returns whether the client is connected to World
