@@ -49,17 +49,25 @@ func (server *UpsServer) Start() {
 
 // RequestPickup handles pickup requests from Amazon service
 func (server *UpsServer) RequestPickup(ctx context.Context, req *proto.PickupRequest) (*proto.PickupResp, error) {
-	return &proto.PickupResp{}, nil
+	return &proto.PickupResp{
+		Seqnum: req.Seqnum,
+	}, nil
 }
 
 // RequestRedirect handles redirect requests from Amazon service
 func (server *UpsServer) RequestRedirect(ctx context.Context, req *proto.Redirect) (*proto.RedirectResp, error) {
-	return &proto.RedirectResp{}, nil
+	return &proto.RedirectResp{
+		Seqnum:    req.Seqnum,
+		PackageId: req.PackageId,
+	}, nil
 }
 
 // RequestCancel handles cancel requests from Amazon service
 func (server *UpsServer) RequestCancel(ctx context.Context, req *proto.CancelOrder) (*proto.CancelResp, error) {
-	return &proto.CancelResp{}, nil
+	return &proto.CancelResp{
+		Seqnum:    req.Seqnum,
+		PackageId: req.PackageId,
+	}, nil
 }
 
 // NotifyLoadReady handles load ready notifications from Amazon service
