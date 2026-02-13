@@ -4,12 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"mini-amazon-ups/proto"
+	upsclient "mini-amazon-ups/ups/client"
 	worldamazon "mini-amazon-ups/world/amazon"
 	"net"
 	"os"
 
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 	protobuf "google.golang.org/protobuf/proto"
 )
 
@@ -24,7 +24,7 @@ type AmazonServer struct {
 func NewAmazonServer(worldClient *worldamazon.AmazonWorldClient) *AmazonServer {
 	return &AmazonServer{
 		worldClient: worldClient,
-		upsClient:   newUpsClient(),
+		upsClient:   upsclient.NewUpsClient(),
 	}
 }
 
@@ -80,22 +80,4 @@ func (server *AmazonServer) NotifyRedirectRequest(ctx context.Context, req *prot
 		Success: *protobuf.Bool(true),
 		Seqnum:  req.Seqnum,
 	}, nil
-}
-
-// newUpsClient creates a new gRPC client for communicating with the UPS service
-func newUpsClient() proto.UpsServiceClient {
-	host := os.Getenv("UPS_SERVER_HOST")
-	if host == "" {
-		host = "localhost"
-	}
-	port := os.Getenv("UPS_SERVER_PORT")
-	if port == "" {
-		port = "50052"
-	}
-	var err error
-	conn, err := grpc.NewClient("dns:///"+host+":"+port, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		panic(err)
-	}
-	return proto.NewUpsServiceClient(conn)
 }
