@@ -69,6 +69,15 @@ func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {
 	if worldPort == "" {
 		worldPort = "23456"
 	}
+	initWorldID := os.Getenv("WORLD_ID")
+	var targetWorldID *int64 = nil
+	if initWorldID != "" {
+		parsedID, err := strconv.ParseInt(initWorldID, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		targetWorldID = protobuf.Int64(parsedID)
+	}
 	// slog.Debug("[Amazon] Connecting to world simulator at " + worldHost + ":" + worldPort)
 	worldClient, err := worldamazon.NewAmazonWorldClient(worldHost + ":" + worldPort)
 	if err != nil {
@@ -84,7 +93,7 @@ func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {
 		})
 	}
 
-	worldID, err := worldClient.Connect(nil, warehouses)
+	worldID, err := worldClient.Connect(targetWorldID, warehouses)
 	if err != nil {
 		return nil, err
 	}
