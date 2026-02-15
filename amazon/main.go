@@ -36,8 +36,8 @@ func main() {
 	amazonServer.Start()
 }
 
+// Connect to world simulator
 func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {
-	// Connect to world simulator
 	worldHost := os.Getenv("WORLD_SERVER_HOST")
 	if worldHost == "" {
 		worldHost = "localhost"
@@ -55,11 +55,6 @@ func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {
 		}
 		targetWorldID = protobuf.Int64(parsedID)
 	}
-	// slog.Debug("[Amazon] Connecting to world simulator at " + worldHost + ":" + worldPort)
-	worldClient, err := worldamazon.NewAmazonWorldClient(worldHost + ":" + worldPort)
-	if err != nil {
-		return nil, err
-	}
 	// Init warehouses
 	warehouses := make([]*proto.AInitWarehouse, 0, 10)
 	for i := range 10 {
@@ -70,7 +65,8 @@ func ConnectToWorld() (*worldamazon.AmazonWorldClient, error) {
 		})
 	}
 
-	worldID, err := worldClient.Connect(targetWorldID, warehouses)
+	// slog.Debug("[Amazon] Connecting to world simulator at " + worldHost + ":" + worldPort)
+	worldClient, worldID, err := worldamazon.NewAmazonWorldClientAndConnect(worldHost+":"+worldPort, targetWorldID, warehouses)
 	if err != nil {
 		return nil, err
 	}

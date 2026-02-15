@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"mini-amazon-ups/proto"
 	"net"
+	"strconv"
 	"sync"
 	"time"
 
@@ -44,6 +45,27 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 	}
 
 	return client, nil
+}
+
+func NewAmazonWorldClientAndConnect(worldAddr string, targetWorldID *int64, warehouse []*proto.AInitWarehouse) (*AmazonWorldClient, int64, error) {
+	worldClient, err := NewAmazonWorldClient(worldAddr)
+	if err != nil {
+		return nil, 0, err
+	}
+	trucks := make([]*proto.UInitTruck, 0, 10)
+	for i := range 10 {
+		trucks = append(trucks, &proto.UInitTruck{
+			Id: protobuf.Int32(int32(i + 1)),
+			X:  protobuf.Int32(int32(i * 10)),
+			Y:  protobuf.Int32(int32(i * 10)),
+		})
+	}
+	worldID, err := worldClient.Connect(targetWorldID, warehouse)
+	if err != nil {
+		return nil, 0, err
+	}
+	slog.Info("[UPS] Connected to world simulator with world ID " + strconv.FormatInt(worldID, 10))
+	return worldClient, worldID, nil
 }
 
 // Connect establishes connection with World simulator
