@@ -17,15 +17,23 @@ import (
 
 // AmazonWorldClient handles communication between Amazon service and World simulator
 type AmazonWorldClient struct {
-	conn         net.Conn
-	reader       *bufio.Reader
-	worldID      int64
-	seqNum       int64
-	seqNumMutex  sync.Mutex
-	responseChan chan *proto.AResponses
-	stopChan     chan struct{}
-	connected    bool
-	connMutex    sync.RWMutex
+	conn            net.Conn
+	reader          *bufio.Reader
+	worldID         int64
+	seqNum          int64
+	seqNumMutex     sync.Mutex
+	responseChan    chan *proto.AResponses
+	stopChan        chan struct{}
+	connected       bool
+	connMutex       sync.RWMutex
+	pendingCommands map[int64]*pendingCommand
+	pendingMutex    sync.Mutex
+}
+
+type pendingCommand struct {
+	msg        *proto.ACommands
+	retryCount int
+	nextRetry  time.Time
 }
 
 // NewAmazonWorldClient creates a new Amazon World client
@@ -36,12 +44,13 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 	}
 
 	client := &AmazonWorldClient{
-		conn:         conn,
-		reader:       bufio.NewReader(conn),
-		seqNum:       0,
-		responseChan: make(chan *proto.AResponses, 100),
-		stopChan:     make(chan struct{}),
-		connected:    false,
+		conn:            conn,
+		reader:          bufio.NewReader(conn),
+		seqNum:          0,
+		responseChan:    make(chan *proto.AResponses, 100),
+		stopChan:        make(chan struct{}),
+		connected:       false,
+		pendingCommands: make(map[int64]*pendingCommand, 100),
 	}
 
 	return client, nil
@@ -100,6 +109,8 @@ func (c *AmazonWorldClient) Connect(worldID *int64, warehouses []*proto.AInitWar
 
 	// Start receiving responses
 	go c.receiveLoop()
+	// Start command retry loop
+	go c.retryLoop()
 
 	return c.worldID, nil
 }
@@ -143,6 +154,9 @@ func (c *AmazonWorldClient) RequestPurchase(whnum int32, products []*proto.AProd
 		},
 	}
 
+	// Add to pending commands for retry logic
+	c.addPendingCommand(seqNum, commands)
+
 	return seqNum, c.SendCommands(commands)
 }
 
@@ -160,6 +174,9 @@ func (c *AmazonWorldClient) RequestPack(whnum int32, products []*proto.AProduct,
 			},
 		},
 	}
+
+	// Add to pending commands for retry logic
+	c.addPendingCommand(seqNum, commands)
 
 	return seqNum, c.SendCommands(commands)
 }
@@ -179,6 +196,9 @@ func (c *AmazonWorldClient) RequestLoad(whnum int32, truckID int32, shipID int64
 		},
 	}
 
+	// Add to pending commands for retry logic
+	c.addPendingCommand(seqNum, commands)
+
 	return seqNum, c.SendCommands(commands)
 }
 
@@ -194,6 +214,9 @@ func (c *AmazonWorldClient) QueryPackage(packageID int64) (int64, error) {
 			},
 		},
 	}
+
+	// Add to pending commands for retry logic
+	c.addPendingCommand(seqNum, commands)
 
 	return seqNum, c.SendCommands(commands)
 }
@@ -264,6 +287,11 @@ func (c *AmazonWorldClient) receiveLoop() {
 				return
 			}
 
+			for _, seqNum := range responses.GetAcks() {
+				c.removePendingCommand(seqNum)
+				slog.Info("Received acknowledgment for command", "seqNum", seqNum)
+			}
+
 			select {
 			case c.responseChan <- responses:
 			case <-c.stopChan:
@@ -272,6 +300,62 @@ func (c *AmazonWorldClient) receiveLoop() {
 			}
 		}
 	}
+}
+
+// retryLoop continuously checks for pending commands and retries them if necessary
+func (c *AmazonWorldClient) retryLoop() {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		case <-ticker.C:
+			c.processPendingCommands()
+		}
+	}
+}
+
+// processPendingCommands checks for pending commands and retries them if they have timed out
+func (c *AmazonWorldClient) processPendingCommands() {
+	c.pendingMutex.Lock()
+	defer c.pendingMutex.Unlock()
+
+	now := time.Now()
+	for seqNum, cmd := range c.pendingCommands {
+		if now.After(cmd.nextRetry) {
+			cmd.retryCount++
+			backoff := time.Duration(1<<uint(cmd.retryCount)) * time.Second
+			cmd.nextRetry = now.Add(backoff)
+			slog.Warn("Retrying command", "seqNum", seqNum, "retryCount", cmd.retryCount)
+			go c.sendMessage(cmd.msg)
+
+			if cmd.retryCount > 4 {
+				slog.Error("Command failed after maximum retries", "seqNum", seqNum)
+				delete(c.pendingCommands, seqNum)
+			}
+		}
+	}
+}
+
+// addPendingCommand adds a command to the pending commands map for retry logic
+func (c *AmazonWorldClient) addPendingCommand(seqNum int64, msg *proto.ACommands) {
+	c.pendingMutex.Lock()
+	defer c.pendingMutex.Unlock()
+
+	c.pendingCommands[seqNum] = &pendingCommand{
+		msg:        msg,
+		nextRetry:  time.Now().Add(time.Second),
+		retryCount: 0,
+	}
+}
+
+// removePendingCommand removes a command from the pending commands map when an acknowledgment is received
+func (c *AmazonWorldClient) removePendingCommand(seqNum int64) {
+	c.pendingMutex.Lock()
+	defer c.pendingMutex.Unlock()
+	delete(c.pendingCommands, seqNum)
 }
 
 // sendMessage sends a protobuf message to World
