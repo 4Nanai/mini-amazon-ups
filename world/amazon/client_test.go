@@ -13,6 +13,7 @@ import (
 )
 
 var worldClient *AmazonWorldClient
+var handler *AmazonWorldHandler
 
 func TestMain(m *testing.M) {
 	godotenv.Load("../../amazon/.env")
@@ -34,6 +35,8 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic("Failed to connect to world simulator: " + err.Error())
 	}
+
+	handler = NewDefaultAmazonWorldHandler()
 	slog.Info("Connected to world simulator with ID " + strconv.FormatInt(worldID, 10))
 	m.Run()
 }
@@ -61,29 +64,33 @@ func TestRequestPurchase(t *testing.T) {
 		if resp.Acks[len(resp.Acks)-1] != seqNum {
 			t.Fatal("Expected ack for sequence number " + strconv.FormatInt(seqNum, 10) + ", got " + strconv.FormatInt(resp.Acks[len(resp.Acks)-1], 10))
 		}
-		if resp.Arrived == nil {
+		if resp.Arrived == nil || len(resp.Arrived) != 1 {
 			t.Fatal("Expected Arrived response, got " + resp.String())
 		}
-		if resp.Arrived[len(resp.Arrived)-1].Whnum == nil || *resp.Arrived[len(resp.Arrived)-1].Whnum != 1 {
-			t.Fatal("Expected Arrived response for warehouse 1, got " + resp.String())
+		arrived := resp.Arrived[len(resp.Arrived)-1]
+		handler.purchaseMoreHandler = func(seqNum int64, whnum int32, things []*proto.AProduct) {
+			if arrived.Whnum == nil || *arrived.Whnum != 1 {
+				t.Fatal("Expected Arrived response for warehouse 1, got " + resp.String())
+			}
+			if arrived.Things == nil || len(arrived.Things) != 1 {
+				t.Fatal("Expected Arrived response with 1 thing, got " + resp.String())
+			}
+			if arrived.Things[0].Id == nil || *arrived.Things[0].Id != testProductId {
+				t.Fatal("Expected Arrived response with thing ID " + strconv.FormatInt(testProductId, 10) + ", got " + resp.String())
+			}
+			if arrived.Things[0].Count == nil || *arrived.Things[0].Count != testProductCount {
+				t.Fatal("Expected Arrived response with thing count " + strconv.FormatInt(testProductCount, 10) + ", got " + resp.String())
+			}
+			if arrived.Things[0].Description == nil || *arrived.Things[0].Description != testProductDescription {
+				t.Fatal("Expected Arrived response with thing description 'Test Product', got " + resp.String())
+			}
+			respSeqNum := arrived.Seqnum
+			if respSeqNum == nil {
+				t.Fatal("Expected Arrived response with sequence number, got " + resp.String())
+			}
+			worldClient.SendAck([]int64{seqNum})
 		}
-		if resp.Arrived[len(resp.Arrived)-1].Things == nil || len(resp.Arrived[len(resp.Arrived)-1].Things) != 1 {
-			t.Fatal("Expected Arrived response with 1 thing, got " + resp.String())
-		}
-		if resp.Arrived[len(resp.Arrived)-1].Things[0].Id == nil || *resp.Arrived[len(resp.Arrived)-1].Things[0].Id != testProductId {
-			t.Fatal("Expected Arrived response with thing ID " + strconv.FormatInt(testProductId, 10) + ", got " + resp.String())
-		}
-		if resp.Arrived[len(resp.Arrived)-1].Things[0].Count == nil || *resp.Arrived[len(resp.Arrived)-1].Things[0].Count != testProductCount {
-			t.Fatal("Expected Arrived response with thing count " + strconv.FormatInt(testProductCount, 10) + ", got " + resp.String())
-		}
-		if resp.Arrived[len(resp.Arrived)-1].Things[0].Description == nil || *resp.Arrived[len(resp.Arrived)-1].Things[0].Description != testProductDescription {
-			t.Fatal("Expected Arrived response with thing description 'Test Product', got " + resp.String())
-		}
-		respSeqNum := resp.Arrived[len(resp.Arrived)-1].Seqnum
-		if respSeqNum == nil {
-			t.Fatal("Expected Arrived response with sequence number, got " + resp.String())
-		}
-		worldClient.SendAck([]int64{*respSeqNum})
+		handler.HandlerPurchaseMore(arrived)
 	case <-time.After(60 * time.Second):
 		t.Fatal("Timed out waiting for response")
 	}
