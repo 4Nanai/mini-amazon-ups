@@ -16,15 +16,17 @@ import (
 // AmazonServer implements the AmazonService gRPC server
 type AmazonServer struct {
 	proto.UnimplementedAmazonServiceServer
-	worldClient *worldamazon.AmazonWorldClient
-	upsClient   proto.UpsServiceClient
+	worldClient  *worldamazon.AmazonWorldClient
+	upsClient    proto.UpsServiceClient
+	worldHandler *worldamazon.AmazonWorldHandler
 }
 
 // NewAmazonServer creates a new AmazonServer instance with the given World client
 func NewAmazonServer(worldClient *worldamazon.AmazonWorldClient) *AmazonServer {
 	return &AmazonServer{
-		worldClient: worldClient,
-		upsClient:   upsclient.NewUpsClient(),
+		worldClient:  worldClient,
+		upsClient:    upsclient.NewUpsClient(),
+		worldHandler: worldamazon.NewDefaultAmazonWorldHandler(),
 	}
 }
 
