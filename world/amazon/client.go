@@ -17,17 +17,20 @@ import (
 
 // AmazonWorldClient handles communication between Amazon service and World simulator
 type AmazonWorldClient struct {
-	conn            net.Conn
-	reader          *bufio.Reader
-	worldID         int64
-	seqNum          int64
-	seqNumMutex     sync.Mutex
-	responseChan    chan *proto.AResponses
-	stopChan        chan struct{}
-	connected       bool
-	connMutex       sync.RWMutex
-	pendingCommands map[int64]*pendingCommand
-	pendingMutex    sync.Mutex
+	conn              net.Conn
+	reader            *bufio.Reader
+	worldID           int64
+	seqNum            int64
+	seqNumMutex       sync.Mutex
+	responseChan      chan *proto.AResponses
+	stopChan          chan struct{}
+	connected         bool
+	connMutex         sync.RWMutex
+	pendingCommands   map[int64]*pendingCommand
+	pendingMutex      sync.Mutex
+	historySeqs       map[int64]time.Time
+	historyMutex      sync.Mutex
+	retentionDuration time.Duration
 }
 
 type pendingCommand struct {
@@ -44,13 +47,15 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 	}
 
 	client := &AmazonWorldClient{
-		conn:            conn,
-		reader:          bufio.NewReader(conn),
-		seqNum:          0,
-		responseChan:    make(chan *proto.AResponses, 100),
-		stopChan:        make(chan struct{}),
-		connected:       false,
-		pendingCommands: make(map[int64]*pendingCommand, 100),
+		conn:              conn,
+		reader:            bufio.NewReader(conn),
+		seqNum:            0,
+		responseChan:      make(chan *proto.AResponses, 100),
+		stopChan:          make(chan struct{}),
+		connected:         false,
+		pendingCommands:   make(map[int64]*pendingCommand, 100),
+		historySeqs:       make(map[int64]time.Time, 1000),
+		retentionDuration: 5 * time.Minute,
 	}
 
 	return client, nil
@@ -111,6 +116,8 @@ func (c *AmazonWorldClient) Connect(worldID *int64, warehouses []*proto.AInitWar
 	go c.receiveLoop()
 	// Start command retry loop
 	go c.retryLoop()
+	// Start history cleanup loop
+	go c.cleanupHistoryLoop()
 
 	return c.worldID, nil
 }
@@ -302,7 +309,7 @@ func (c *AmazonWorldClient) receiveLoop() {
 	}
 }
 
-// retryLoop continuously checks for pending commands and retries them if necessary
+// retryLoop continuously calls processPendingCommands to check for commands that need to be retried
 func (c *AmazonWorldClient) retryLoop() {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
@@ -356,6 +363,34 @@ func (c *AmazonWorldClient) removePendingCommand(seqNum int64) {
 	c.pendingMutex.Lock()
 	defer c.pendingMutex.Unlock()
 	delete(c.pendingCommands, seqNum)
+}
+
+// cleanupHistoryLoop periodically calls cleanupHistory to remove old sequence numbers
+func (c *AmazonWorldClient) cleanupHistoryLoop() {
+	ticker := time.NewTicker(1 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.stopChan:
+			return
+		case <-ticker.C:
+			c.cleanupHistory()
+		}
+	}
+}
+
+// cleanupHistory removes old sequence numbers from the history to prevent unbounded growth
+func (c *AmazonWorldClient) cleanupHistory() {
+	now := time.Now()
+
+	c.historyMutex.Lock()
+	defer c.historyMutex.Unlock()
+	for seqNum, timestamp := range c.historySeqs {
+		if now.Sub(timestamp) > c.retentionDuration {
+			delete(c.historySeqs, seqNum)
+		}
+	}
 }
 
 // sendMessage sends a protobuf message to World
