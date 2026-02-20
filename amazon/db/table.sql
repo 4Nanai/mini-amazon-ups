@@ -69,16 +69,6 @@ CREATE TABLE order_items (
     FOREIGN KEY (product_id) REFERENCES products(product_id)
 );
 
--- 6. World Simulation State (世界模拟状态)
--- 对应 AConnected 和 AConnect
--- Amazon 需要记住当前连接的 world_id，以便断线重连或崩溃恢复
-CREATE TABLE world_state (
-    id INT PRIMARY KEY AUTO_INCREMENT,
-    world_id BIGINT NOT NULL,
-    sim_speed INT DEFAULT 100,
-    status VARCHAR(20) DEFAULT 'DISCONNECTED' -- CONNECTED, DISCONNECTED
-);
-
 -- 初始化索引以优化查询速度
 CREATE INDEX idx_order_package ON orders(package_id);
 CREATE INDEX idx_order_status ON orders(status);
