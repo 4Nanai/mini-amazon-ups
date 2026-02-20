@@ -8,6 +8,7 @@ import (
 
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type Database struct {
@@ -18,6 +19,23 @@ type Warehouse struct {
 	WarehouseID int `gorm:"primaryKey;autoIncrement"`
 	X           int `gorm:"not null"`
 	Y           int `gorm:"not null"`
+}
+
+type Product struct {
+	ProductID   int     `gorm:"primaryKey;autoIncrement"`
+	Description string  `gorm:"not null"`
+	Price       float64 `gorm:"type:decimal(10,2);default:0.00"`
+}
+
+type Inventory struct {
+	WarehouseID int   `gorm:"primaryKey"`
+	ProductID   int64 `gorm:"primaryKey"`
+	Count       int   `gorm:"default:0"`
+}
+
+// TableName overrides the default table name for Inventory model
+func (Inventory) TableName() string {
+	return "inventory"
 }
 
 func NewDatabase() *Database {
@@ -40,7 +58,11 @@ func (d *Database) InitWarehouses(count int) ([]*proto.AInitWarehouse, error) {
 			Y: i * 10,
 		})
 	}
-	d.db.Create(warehouses)
+	err := d.db.Create(&warehouses).Error
+	if err != nil {
+		return nil, err
+	}
+
 	initWarehouses := make([]*proto.AInitWarehouse, 0, count)
 	for _, warehouse := range warehouses {
 		initWarehouses = append(initWarehouses, &proto.AInitWarehouse{
@@ -50,4 +72,38 @@ func (d *Database) InitWarehouses(count int) ([]*proto.AInitWarehouse, error) {
 		})
 	}
 	return initWarehouses, nil
+}
+
+func (d *Database) InsertProducts(products ...*Product) error {
+	if len(products) == 0 {
+		return nil
+	}
+	return d.db.Create(&products).Error
+}
+
+func (d *Database) AddOrUpdateInventory(warehouseID int, productID int64, count int) error {
+	inventory := Inventory{
+		WarehouseID: warehouseID,
+		ProductID:   productID,
+		Count:       count,
+	}
+
+	return d.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "warehouse_id"},
+			{Name: "product_id"},
+		},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"count": gorm.Expr("inventory.count + ?", count),
+		}),
+	}).Create(&inventory).Error
+}
+
+func (d *Database) GetInventory(warehouseID int, productID int64) (int, error) {
+	var inventory Inventory
+	err := d.db.Where("warehouse_id = ? AND product_id = ?", warehouseID, productID).First(&inventory).Error
+	if err != nil {
+		return 0, err
+	}
+	return inventory.Count, nil
 }

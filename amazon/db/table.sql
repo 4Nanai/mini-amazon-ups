@@ -13,7 +13,7 @@ CREATE TABLE warehouses (
 -- 对应 world_amazon-1.proto 中的 AProduct
 -- 存储商品的基本信息
 CREATE TABLE products (
-    product_id BIGINT PRIMARY KEY,
+    product_id BIGINT PRIMARY KEY AUTO_INCREMENT,
     description VARCHAR(255) NOT NULL,
     price DECIMAL(10, 2) DEFAULT 0.00
 );
