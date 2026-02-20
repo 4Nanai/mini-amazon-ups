@@ -2,8 +2,10 @@ package main
 
 import (
 	"log/slog"
+	"mini-amazon-ups/amazon/db"
 	"mini-amazon-ups/amazon/server"
 	"mini-amazon-ups/proto"
+	upsclient "mini-amazon-ups/ups/client"
 	worldamazon "mini-amazon-ups/world/amazon"
 	"os"
 	"strconv"
@@ -28,12 +30,36 @@ func main() {
 		panic("Failed to load .env file")
 	}
 
-	worldClient, err := ConnectToWorld()
+	// Init world client & handler
+	worldHost := os.Getenv("WORLD_SERVER_HOST")
+	if worldHost == "" {
+		worldHost = "localhost"
+	}
+	worldPort := os.Getenv("WORLD_SERVER_PORT")
+	if worldPort == "" {
+		worldPort = "23456"
+	}
+	worldClient, err := worldamazon.NewAmazonWorldClient(worldHost + ":" + worldPort)
+	if err != nil {
+		panic("Failed to create Amazon World client: " + err.Error())
+	}
+	worldHandler := worldamazon.NewDefaultAmazonWorldHandler()
+
+	// Init ups client
+	upsClient := upsclient.NewUpsClient()
+
+	// Init database & warehouses
+	database := db.NewDatabase()
+	warehouses, err := database.InitWarehouses(5)
+
+	// Start Amazon server
+	amazonServer := server.NewAmazonServer(worldClient, upsClient, worldHandler, database)
+	worldID, err := amazonServer.ConnectToWorld(nil, warehouses)
 	if err != nil {
 		panic("Failed to connect to world simulator: " + err.Error())
 	}
-	amazonServer := server.NewAmazonServer(worldClient)
-	amazonServer.Start()
+	slog.Info("Connected to world simulator with world ID " + strconv.FormatInt(worldID, 10))
+	amazonServer.StartServe()
 }
 
 // Connect to world simulator

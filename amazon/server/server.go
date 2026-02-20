@@ -3,11 +3,12 @@ package server
 import (
 	"context"
 	"log/slog"
+	"mini-amazon-ups/amazon/db"
 	"mini-amazon-ups/proto"
-	upsclient "mini-amazon-ups/ups/client"
 	worldamazon "mini-amazon-ups/world/amazon"
 	"net"
 	"os"
+	"strconv"
 
 	"google.golang.org/grpc"
 	protobuf "google.golang.org/protobuf/proto"
@@ -19,19 +20,44 @@ type AmazonServer struct {
 	worldClient  *worldamazon.AmazonWorldClient
 	upsClient    proto.UpsServiceClient
 	worldHandler *worldamazon.AmazonWorldHandler
+	database     *db.Database
 }
 
 // NewAmazonServer creates a new AmazonServer instance with the given World client
-func NewAmazonServer(worldClient *worldamazon.AmazonWorldClient) *AmazonServer {
+func NewAmazonServer(worldClient *worldamazon.AmazonWorldClient, upsClient proto.UpsServiceClient, worldHandler *worldamazon.AmazonWorldHandler, database *db.Database) *AmazonServer {
 	return &AmazonServer{
 		worldClient:  worldClient,
-		upsClient:    upsclient.NewUpsClient(),
-		worldHandler: worldamazon.NewDefaultAmazonWorldHandler(),
+		upsClient:    upsClient,
+		worldHandler: worldHandler,
+		database:     database,
 	}
 }
 
-// Start starts the Amazon gRPC server and listens for incoming requests
-func (server *AmazonServer) Start() {
+func (server *AmazonServer) ConnectToWorld(worldID *int64, warehouses []*proto.AInitWarehouse) (int64, error) {
+	if server.worldClient == nil {
+		return 0, nil
+	}
+
+	var targetWorldID *int64 = nil
+	if worldID != nil {
+		targetWorldID = worldID
+	} else {
+		initWorldID := os.Getenv("WORLD_ID")
+		if initWorldID != "" {
+			parsedID, err := strconv.ParseInt(initWorldID, 10, 64)
+			if err != nil {
+				return 0, err
+			}
+			targetWorldID = protobuf.Int64(parsedID)
+		}
+	}
+
+	worldConnected, err := server.worldClient.Connect(targetWorldID, warehouses)
+	return worldConnected, err
+}
+
+// StartServe starts the Amazon gRPC server and listens for incoming requests
+func (server *AmazonServer) StartServe() {
 	port := os.Getenv("SERVER_PORT")
 	if port == "" {
 		port = "50051"

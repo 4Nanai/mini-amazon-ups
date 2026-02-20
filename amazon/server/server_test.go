@@ -4,6 +4,7 @@ import (
 	"context"
 	amazonclient "mini-amazon-ups/amazon/client"
 	"mini-amazon-ups/proto"
+	"os"
 	"testing"
 	"time"
 
@@ -14,9 +15,17 @@ var amazonClient proto.AmazonServiceClient
 
 func TestMain(m *testing.M) {
 	godotenv.Load("../.env")
-	amazonServer := NewAmazonServer(nil)
+	worldHost := os.Getenv("WORLD_SERVER_HOST")
+	if worldHost == "" {
+		worldHost = "localhost"
+	}
+	worldPort := os.Getenv("WORLD_SERVER_PORT")
+	if worldPort == "" {
+		worldPort = "23456"
+	}
+	amazonServer := AmazonServer{}
 	go func() {
-		amazonServer.Start()
+		amazonServer.StartServe()
 	}()
 	time.Sleep(time.Second)
 	amazonClient = amazonclient.NewAmazonClient()
