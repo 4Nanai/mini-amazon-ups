@@ -17,20 +17,28 @@ import (
 
 // AmazonWorldClient handles communication between Amazon service and World simulator
 type AmazonWorldClient struct {
-	conn              net.Conn
-	reader            *bufio.Reader
-	worldID           int64
-	seqNum            int64
-	seqNumMutex       sync.Mutex
-	responseChan      chan *proto.AResponses
-	stopChan          chan struct{}
-	connected         bool
-	connMutex         sync.RWMutex
-	pendingCommands   map[int64]*pendingCommand
-	pendingMutex      sync.Mutex
+	conn            net.Conn
+	reader          *bufio.Reader
+	worldID         int64
+	seqNum          int64
+	seqNumMutex     sync.Mutex
+	responseChan    chan *proto.AResponses
+	stopChan        chan struct{}
+	connected       bool
+	connMutex       sync.RWMutex
+	pendingCommands map[int64]*pendingCommand
+	pendingMutex    sync.Mutex
+
+	// history of received sequence numbers for idempotency control
 	historySeqs       map[int64]time.Time
 	historyMutex      sync.Mutex
 	retentionDuration time.Duration
+	lastCleanup       time.Time
+
+	// reconnection state
+	worldAddr    string
+	savedWorldID *int64
+	loopsStarted bool
 }
 
 type pendingCommand struct {
@@ -56,6 +64,8 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 		pendingCommands:   make(map[int64]*pendingCommand, 100),
 		historySeqs:       make(map[int64]time.Time, 1000),
 		retentionDuration: 5 * time.Minute,
+		lastCleanup:       time.Now(),
+		worldAddr:         worldAddr,
 	}
 
 	return client, nil
@@ -82,44 +92,99 @@ func NewAmazonWorldClientAndConnect(worldAddr string, targetWorldID *int64, ware
 	return worldClient, worldID, nil
 }
 
-// Connect establishes connection with World simulator
+// Connect establishes connection with World simulator with auto-retry
 func (c *AmazonWorldClient) Connect(worldID *int64, warehouses []*proto.AInitWarehouse) (int64, error) {
-	isAmazon := true
-	connectMsg := &proto.AConnect{
-		IsAmazon: &isAmazon,
-		Initwh:   warehouses,
+	// save params for potential reconnects
+	c.savedWorldID = worldID
+
+	backoff := time.Second
+	maxBackoff := 32 * time.Second
+
+	for {
+		select {
+		case <-c.stopChan:
+			return 0, fmt.Errorf("connection stopped")
+		default:
+		}
+
+		// Try to dial if we don't have a connection
+		c.connMutex.RLock()
+		hasConn := c.conn != nil
+		c.connMutex.RUnlock()
+
+		if !hasConn {
+			slog.Info("Dialing World", "addr", c.worldAddr)
+			conn, err := net.Dial("tcp", c.worldAddr)
+			if err != nil {
+				slog.Warn("Failed to dial World", "error", err, "nextBackoff", backoff)
+				time.Sleep(backoff)
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			c.connMutex.Lock()
+			c.conn = conn
+			c.reader = bufio.NewReader(conn)
+			c.connMutex.Unlock()
+		}
+
+		// Prepare connect message
+		isAmazon := true
+		connectMsg := &proto.AConnect{
+			IsAmazon: &isAmazon,
+			Initwh:   warehouses,
+		}
+
+		if worldID != nil {
+			connectMsg.Worldid = worldID
+		}
+
+		// Send connect message
+		if err := c.sendMessage(connectMsg); err != nil {
+			slog.Warn("Failed to send connect message", "error", err, "nextBackoff", backoff)
+			c.closeConnection()
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		// Wait for AConnected response
+		connectedMsg := &proto.AConnected{}
+		if err := c.receiveMessage(connectedMsg); err != nil {
+			slog.Warn("Failed to receive connected message", "error", err, "nextBackoff", backoff)
+			c.closeConnection()
+			time.Sleep(backoff)
+			backoff *= 2
+			if backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+			continue
+		}
+
+		// Success!
+		c.worldID = connectedMsg.GetWorldid()
+		c.connMutex.Lock()
+		c.connected = true
+		c.connMutex.Unlock()
+
+		slog.Info("Connected to World", "worldID", c.worldID, "result", connectedMsg.GetResult())
+
+		// Always start a receive loop for this connection
+		go c.receiveLoop()
+		// Start periodic loops only once
+		if !c.loopsStarted {
+			go c.retryLoop()
+			go c.cleanupHistoryLoop()
+			c.loopsStarted = true
+		}
+
+		return c.worldID, nil
 	}
-
-	if worldID != nil {
-		connectMsg.Worldid = worldID
-	}
-
-	// Send connect message
-	if err := c.sendMessage(connectMsg); err != nil {
-		return 0, fmt.Errorf("failed to send connect message: %w", err)
-	}
-
-	// Wait for AConnected response
-	connectedMsg := &proto.AConnected{}
-	if err := c.receiveMessage(connectedMsg); err != nil {
-		return 0, fmt.Errorf("failed to receive connected message: %w", err)
-	}
-
-	c.worldID = connectedMsg.GetWorldid()
-	c.connMutex.Lock()
-	c.connected = true
-	c.connMutex.Unlock()
-
-	slog.Info("Connected to World", "worldID", c.worldID, "result", connectedMsg.GetResult())
-
-	// Start receiving responses
-	go c.receiveLoop()
-	// Start command retry loop
-	go c.retryLoop()
-	// Start history cleanup loop
-	go c.cleanupHistoryLoop()
-
-	return c.worldID, nil
 }
 
 // GetNextSeqNum generates and returns the next sequence number
@@ -290,7 +355,8 @@ func (c *AmazonWorldClient) receiveLoop() {
 				c.connMutex.Lock()
 				c.connected = false
 				c.connMutex.Unlock()
-				close(c.responseChan)
+				// start reconnect attempts and return from this receiveLoop
+				go c.attemptReconnect()
 				return
 			}
 
@@ -306,6 +372,18 @@ func (c *AmazonWorldClient) receiveLoop() {
 				return
 			}
 		}
+	}
+}
+
+// attemptReconnect tries to re-establish the connection
+// Connect method now handles all retry logic automatically
+func (c *AmazonWorldClient) attemptReconnect() {
+	slog.Info("Starting reconnection process")
+	// Connect will handle retries automatically with exponential backoff
+	_, err := c.Connect(c.savedWorldID, nil)
+	if err != nil {
+		// This should only happen if stopChan is closed
+		slog.Error("Reconnection stopped", "error", err)
 	}
 }
 
@@ -326,6 +404,13 @@ func (c *AmazonWorldClient) retryLoop() {
 
 // processPendingCommands checks for pending commands and retries them if they have timed out
 func (c *AmazonWorldClient) processPendingCommands() {
+	c.connMutex.RLock()
+	if !c.connected {
+		c.connMutex.RUnlock()
+		return
+	}
+	c.connMutex.RUnlock()
+
 	c.pendingMutex.Lock()
 	defer c.pendingMutex.Unlock()
 
@@ -333,7 +418,7 @@ func (c *AmazonWorldClient) processPendingCommands() {
 	for seqNum, cmd := range c.pendingCommands {
 		if now.After(cmd.nextRetry) {
 			cmd.retryCount++
-			backoff := time.Duration(1<<uint(cmd.retryCount)) * time.Second
+			backoff := time.Duration(2<<uint(cmd.retryCount)) * time.Second
 			cmd.nextRetry = now.Add(backoff)
 			slog.Warn("Retrying command", "seqNum", seqNum, "retryCount", cmd.retryCount)
 			go c.sendMessage(cmd.msg)
@@ -367,7 +452,7 @@ func (c *AmazonWorldClient) removePendingCommand(seqNum int64) {
 
 // cleanupHistoryLoop periodically calls cleanupHistory to remove old sequence numbers
 func (c *AmazonWorldClient) cleanupHistoryLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
+	ticker := time.NewTicker(c.retentionDuration)
 	defer ticker.Stop()
 
 	for {
@@ -382,14 +467,32 @@ func (c *AmazonWorldClient) cleanupHistoryLoop() {
 
 // cleanupHistory removes old sequence numbers from the history to prevent unbounded growth
 func (c *AmazonWorldClient) cleanupHistory() {
-	now := time.Now()
+	c.connMutex.RLock()
+	if !c.connected {
+		c.connMutex.RUnlock()
+		return
+	}
+	c.connMutex.RUnlock()
 
+	now := time.Now()
 	c.historyMutex.Lock()
-	defer c.historyMutex.Unlock()
 	for seqNum, timestamp := range c.historySeqs {
-		if now.Sub(timestamp) > c.retentionDuration {
+		if timestamp.Before(c.lastCleanup) {
 			delete(c.historySeqs, seqNum)
 		}
+	}
+	c.historyMutex.Unlock()
+	c.lastCleanup = now
+}
+
+// closeConnection safely closes the current connection
+func (c *AmazonWorldClient) closeConnection() {
+	c.connMutex.Lock()
+	defer c.connMutex.Unlock()
+	if c.conn != nil {
+		c.conn.Close()
+		c.conn = nil
+		c.reader = nil
 	}
 }
 
