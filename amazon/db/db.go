@@ -224,6 +224,24 @@ func (d *Database) UpdateOrderPackageID(orderID int64, packageID int64) error {
 	return d.db.Model(&Order{}).Where("order_id = ?", orderID).Update("package_id", packageID).Error
 }
 
+// UpdateOrderAfterPickup updates package_id, truck_id, and status in a single database operation
+// This ensures atomicity and better performance compared to three separate updates
+func (d *Database) UpdateOrderAfterPickup(orderID int64, packageID int64, truckID int, status string) error {
+	return d.db.Model(&Order{}).Where("order_id = ?", orderID).Updates(map[string]interface{}{
+		"package_id": packageID,
+		"truck_id":   truckID,
+		"status":     status,
+	}).Error
+}
+
+// UpdateOrderDestination updates the destination coordinates for an order
+func (d *Database) UpdateOrderDestination(orderID int64, destX, destY int) error {
+	return d.db.Model(&Order{}).Where("order_id = ?", orderID).Updates(map[string]interface{}{
+		"dest_x": destX,
+		"dest_y": destY,
+	}).Error
+}
+
 // GetOrdersByStatus retrieves all orders with a given status
 func (d *Database) GetOrdersByStatus(status string) ([]Order, error) {
 	var orders []Order

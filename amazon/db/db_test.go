@@ -339,6 +339,40 @@ func TestUpdateOrderPackageID(t *testing.T) {
 	slog.Info("order package ID updated successfully", "order", updated)
 }
 
+func TestUpdateOrderDestination(t *testing.T) {
+	tx := db.db.Begin()
+	testdb := &Database{db: tx}
+	defer tx.Rollback()
+
+	_, err := testdb.InitWarehouses(1)
+	if err != nil {
+		t.Fatalf("failed to initialize warehouses: %v", err)
+	}
+
+	order, err := testdb.CreateOrder("user123", 100, 200, 1)
+	if err != nil {
+		t.Fatalf("failed to create order: %v", err)
+	}
+
+	newX := 300
+	newY := 400
+	err = testdb.UpdateOrderDestination(order.OrderID, newX, newY)
+	if err != nil {
+		t.Fatalf("failed to update order destination: %v", err)
+	}
+
+	updated, err := testdb.GetOrder(order.OrderID)
+	if err != nil {
+		t.Fatalf("failed to get updated order: %v", err)
+	}
+
+	if updated.DestX != newX || updated.DestY != newY {
+		t.Fatalf("expected destination to be (%d, %d), got (%d, %d)", newX, newY, updated.DestX, updated.DestY)
+	}
+
+	slog.Info("order destination updated successfully", "order", updated)
+}
+
 func TestUpdateOrderTruck(t *testing.T) {
 	tx := db.db.Begin()
 	testdb := &Database{db: tx}

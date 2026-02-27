@@ -31,7 +31,7 @@ type AmazonWorldClient struct {
 
 	// history of received sequence numbers for idempotency control
 	historySeqs       map[int64]time.Time
-	historyMutex      sync.Mutex
+	historyMutex      sync.RWMutex
 	retentionDuration time.Duration
 	lastCleanup       time.Time
 
@@ -360,19 +360,112 @@ func (c *AmazonWorldClient) receiveLoop() {
 				return
 			}
 
+			c.pendingMutex.Lock()
 			for _, seqNum := range responses.GetAcks() {
-				c.removePendingCommand(seqNum)
+				delete(c.pendingCommands, seqNum)
 				slog.Info("Received acknowledgment for command", "seqNum", seqNum)
 			}
+			c.pendingMutex.Unlock()
 
-			select {
-			case c.responseChan <- responses:
-			case <-c.stopChan:
-				close(c.responseChan)
-				return
+			// Filter out duplicate messages and create a new response with only new messages
+			filteredResponses := &proto.AResponses{}
+			processedSeqs := make([]int64, 0)
+
+			// Filter Arrived messages
+			for _, arrived := range responses.GetArrived() {
+				seqNum := arrived.GetSeqnum()
+				if c.isProcessed(seqNum) {
+					slog.Warn("Received duplicate Arrived message, ignoring", "seqNum", seqNum)
+					processedSeqs = append(processedSeqs, seqNum)
+				} else {
+					c.markProcessed(seqNum)
+					filteredResponses.Arrived = append(filteredResponses.Arrived, arrived)
+				}
+			}
+
+			// Filter Loaded messages
+			for _, loaded := range responses.GetLoaded() {
+				seqNum := loaded.GetSeqnum()
+				if c.isProcessed(seqNum) {
+					slog.Warn("Received duplicate Loaded message, ignoring", "seqNum", seqNum)
+					processedSeqs = append(processedSeqs, seqNum)
+				} else {
+					c.markProcessed(seqNum)
+					filteredResponses.Loaded = append(filteredResponses.Loaded, loaded)
+				}
+			}
+
+			// Filter PackageStatus messages
+			for _, pkg := range responses.GetPackagestatus() {
+				seqNum := pkg.GetSeqnum()
+				if c.isProcessed(seqNum) {
+					slog.Warn("Received duplicate PackageStatus message, ignoring", "seqNum", seqNum)
+					processedSeqs = append(processedSeqs, seqNum)
+				} else {
+					c.markProcessed(seqNum)
+					filteredResponses.Packagestatus = append(filteredResponses.Packagestatus, pkg)
+				}
+			}
+
+			// Filter Ready messages
+			for _, ready := range responses.GetReady() {
+				seqNum := ready.GetSeqnum()
+				if c.isProcessed(seqNum) {
+					slog.Warn("Received duplicate Ready message, ignoring", "seqNum", seqNum)
+					processedSeqs = append(processedSeqs, seqNum)
+				} else {
+					c.markProcessed(seqNum)
+					filteredResponses.Ready = append(filteredResponses.Ready, ready)
+				}
+			}
+
+			// Filter Error messages
+			for _, errResp := range responses.GetError() {
+				seqNum := errResp.GetSeqnum()
+				if c.isProcessed(seqNum) {
+					slog.Warn("Received duplicate Error message, ignoring", "seqNum", seqNum)
+					processedSeqs = append(processedSeqs, seqNum)
+				} else {
+					c.markProcessed(seqNum)
+					filteredResponses.Error = append(filteredResponses.Error, errResp)
+				}
+			}
+
+			// Send ACK for duplicate messages
+			if len(processedSeqs) > 0 {
+				c.SendAck(processedSeqs)
+			}
+
+			// Only send to channel if there are new messages
+			hasNewMessages := len(filteredResponses.GetArrived()) > 0 ||
+				len(filteredResponses.GetLoaded()) > 0 ||
+				len(filteredResponses.GetPackagestatus()) > 0 ||
+				len(filteredResponses.GetReady()) > 0 ||
+				len(filteredResponses.GetError()) > 0
+
+			if hasNewMessages {
+				select {
+				case c.responseChan <- filteredResponses:
+				case <-c.stopChan:
+					close(c.responseChan)
+					return
+				}
 			}
 		}
 	}
+}
+
+func (c *AmazonWorldClient) isProcessed(seqNum int64) bool {
+	c.historyMutex.RLock()
+	_, exists := c.historySeqs[seqNum]
+	c.historyMutex.RUnlock()
+	return exists
+}
+
+func (c *AmazonWorldClient) markProcessed(seqNum int64) {
+	c.historyMutex.Lock()
+	c.historySeqs[seqNum] = time.Now()
+	c.historyMutex.Unlock()
 }
 
 // attemptReconnect tries to re-establish the connection
@@ -441,13 +534,6 @@ func (c *AmazonWorldClient) addPendingCommand(seqNum int64, msg *proto.ACommands
 		nextRetry:  time.Now().Add(time.Second),
 		retryCount: 0,
 	}
-}
-
-// removePendingCommand removes a command from the pending commands map when an acknowledgment is received
-func (c *AmazonWorldClient) removePendingCommand(seqNum int64) {
-	c.pendingMutex.Lock()
-	defer c.pendingMutex.Unlock()
-	delete(c.pendingCommands, seqNum)
 }
 
 // cleanupHistoryLoop periodically calls cleanupHistory to remove old sequence numbers

@@ -33,7 +33,7 @@ func NewAmazonWorldHandler(
 	}
 }
 
-func (h *AmazonWorldHandler) HandlerPurchaseMore(resp *proto.APurchaseMore) {
+func (h *AmazonWorldHandler) HandlePurchaseMore(resp *proto.APurchaseMore) {
 	if h.purchaseMoreHandler != nil {
 		h.purchaseMoreHandler(resp.GetSeqnum(), resp.GetWhnum(), resp.GetThings())
 	} else {
@@ -41,7 +41,7 @@ func (h *AmazonWorldHandler) HandlerPurchaseMore(resp *proto.APurchaseMore) {
 	}
 }
 
-func (h *AmazonWorldHandler) HandlerPacked(resp *proto.APacked) {
+func (h *AmazonWorldHandler) HandlePacked(resp *proto.APacked) {
 	if h.packedHandler != nil {
 		h.packedHandler(resp.GetSeqnum(), resp.GetShipid())
 	} else {
@@ -49,7 +49,7 @@ func (h *AmazonWorldHandler) HandlerPacked(resp *proto.APacked) {
 	}
 }
 
-func (h *AmazonWorldHandler) HandlerLoaded(resp *proto.ALoaded) {
+func (h *AmazonWorldHandler) HandleLoaded(resp *proto.ALoaded) {
 	if h.loadedHandler != nil {
 		h.loadedHandler(resp.GetSeqnum(), resp.GetShipid())
 	} else {
@@ -57,7 +57,7 @@ func (h *AmazonWorldHandler) HandlerLoaded(resp *proto.ALoaded) {
 	}
 }
 
-func (h *AmazonWorldHandler) HandlerPackage(resp *proto.APackage) {
+func (h *AmazonWorldHandler) HandlePackage(resp *proto.APackage) {
 	if h.packageHandler != nil {
 		h.packageHandler(resp.GetSeqnum(), resp.GetPackageid(), resp.GetStatus())
 	} else {
@@ -65,7 +65,7 @@ func (h *AmazonWorldHandler) HandlerPackage(resp *proto.APackage) {
 	}
 }
 
-func (h *AmazonWorldHandler) HandlerErr(resp *proto.AErr) {
+func (h *AmazonWorldHandler) HandleErr(resp *proto.AErr) {
 	if h.errHandler != nil {
 		h.errHandler(resp.GetSeqnum(), resp.GetOriginseqnum(), resp.GetErr())
 	} else {

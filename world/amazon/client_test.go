@@ -90,7 +90,7 @@ func TestRequestPurchase(t *testing.T) {
 			}
 			worldClient.SendAck([]int64{seqNum})
 		}
-		handler.HandlerPurchaseMore(arrived)
+		handler.HandlePurchaseMore(arrived)
 	case <-time.After(60 * time.Second):
 		t.Fatal("Timed out waiting for response")
 	}
