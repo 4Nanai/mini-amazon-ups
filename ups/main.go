@@ -16,7 +16,8 @@ import (
 
 func init() {
 	slog.SetDefault(slog.New(tint.NewHandler(os.Stdout, &tint.Options{
-		Level:      slog.LevelDebug,
+		AddSource:  true,
+		Level:      slog.LevelInfo,
 		TimeFormat: time.Kitchen,
 	})))
 }
