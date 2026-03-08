@@ -71,24 +71,29 @@ func NewAmazonWorldClient(worldAddr string) (*AmazonWorldClient, error) {
 	return client, nil
 }
 
-func NewAmazonWorldClientAndConnect(worldAddr string, targetWorldID *int64, warehouse []*proto.AInitWarehouse) (*AmazonWorldClient, int64, error) {
+func NewAmazonWorldClientAndConnect(worldAddr string, targetWorldID *int64, warehouses []*proto.AInitWarehouse) (*AmazonWorldClient, int64, error) {
 	worldClient, err := NewAmazonWorldClient(worldAddr)
 	if err != nil {
 		return nil, 0, err
 	}
-	trucks := make([]*proto.UInitTruck, 0, 10)
-	for i := range 10 {
-		trucks = append(trucks, &proto.UInitTruck{
-			Id: protobuf.Int32(int32(i + 1)),
-			X:  protobuf.Int32(int32(i * 10)),
-			Y:  protobuf.Int32(int32(i * 10)),
-		})
+	var initWarehouses []*proto.AInitWarehouse
+	if warehouses != nil {
+		initWarehouses = warehouses
+	} else {
+		initWarehouses = make([]*proto.AInitWarehouse, 0, 10)
+		for i := range 10 {
+			initWarehouses = append(initWarehouses, &proto.AInitWarehouse{
+				Id: protobuf.Int32(int32(i + 1)),
+				X:  protobuf.Int32(int32(i * 10)),
+				Y:  protobuf.Int32(int32(i * 10)),
+			})
+		}
 	}
-	worldID, err := worldClient.Connect(targetWorldID, warehouse)
+	worldID, err := worldClient.Connect(targetWorldID, initWarehouses)
 	if err != nil {
 		return nil, 0, err
 	}
-	slog.Info("[UPS] Connected to world simulator with world ID " + strconv.FormatInt(worldID, 10))
+	slog.Info("[Amazon] Connected to world simulator with world ID " + strconv.FormatInt(worldID, 10))
 	return worldClient, worldID, nil
 }
 
@@ -204,6 +209,7 @@ func (c *AmazonWorldClient) SendCommands(commands *proto.ACommands) error {
 	}
 	c.connMutex.RUnlock()
 
+	slog.Debug("Sending commands to World", "commands", commands)
 	return c.sendMessage(commands)
 }
 
@@ -363,7 +369,7 @@ func (c *AmazonWorldClient) receiveLoop() {
 			c.pendingMutex.Lock()
 			for _, seqNum := range responses.GetAcks() {
 				delete(c.pendingCommands, seqNum)
-				slog.Info("Received acknowledgment for command", "seqNum", seqNum)
+				slog.Debug("Received acknowledgment for command", "seqNum", seqNum)
 			}
 			c.pendingMutex.Unlock()
 
@@ -513,8 +519,8 @@ func (c *AmazonWorldClient) processPendingCommands() {
 			cmd.retryCount++
 			backoff := time.Duration(2<<uint(cmd.retryCount)) * time.Second
 			cmd.nextRetry = now.Add(backoff)
-			slog.Warn("Retrying command", "seqNum", seqNum, "retryCount", cmd.retryCount)
 			go c.sendMessage(cmd.msg)
+			slog.Debug("Retrying command", "seqNum", seqNum, "retryCount", cmd.retryCount, "backoff", backoff)
 
 			if cmd.retryCount > 4 {
 				slog.Error("Command failed after maximum retries", "seqNum", seqNum)

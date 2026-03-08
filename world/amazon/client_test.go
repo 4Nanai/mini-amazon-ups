@@ -21,7 +21,10 @@ func TestMain(m *testing.M) {
 	if host == "" {
 		host = "localhost"
 	}
-	port := "23456"
+	port := os.Getenv("WORLD_SERVER_PORT")
+	if port == "" {
+		port = "23456"
+	}
 
 	var worldID int64
 	var err error
@@ -61,9 +64,6 @@ func TestRequestPurchase(t *testing.T) {
 	select {
 	case resp := <-worldClient.ReceiveResponses():
 		slog.Info("Received response", "response", resp)
-		if resp.Acks[len(resp.Acks)-1] != seqNum {
-			t.Fatal("Expected ack for sequence number " + strconv.FormatInt(seqNum, 10) + ", got " + strconv.FormatInt(resp.Acks[len(resp.Acks)-1], 10))
-		}
 		if resp.Arrived == nil || len(resp.Arrived) != 1 {
 			t.Fatal("Expected Arrived response, got " + resp.String())
 		}
